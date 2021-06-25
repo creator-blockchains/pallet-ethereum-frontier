@@ -25,7 +25,7 @@ pub use eth::{
 	EthTask,
 };
 pub use eth_pubsub::{EthPubSubApi, EthPubSubApiServer, HexEncodedIdProvider};
-pub use overrides::{StorageOverride, SchemaV1Override, OverrideHandle, RuntimeApiStorageOverride};
+pub use overrides::{StorageOverride, SchemaV1Override};
 
 use ethereum_types::{H160, H256};
 use ethereum::{
@@ -63,7 +63,7 @@ pub mod frontier_backend_client {
 	{
 		Ok(match number.unwrap_or(BlockNumber::Latest) {
 			BlockNumber::Hash { hash, .. } => {
-				load_hash::<B>(backend, hash).unwrap_or(None)
+				load_hash::<B, C>(client, backend, hash).unwrap_or(None)
 			},
 			BlockNumber::Num(number) => {
 				Some(BlockId::Number(number.unique_saturated_into()))
@@ -82,16 +82,27 @@ pub mod frontier_backend_client {
 		})
 	}
 
-	pub fn load_hash<B: BlockT>(backend: &fc_db::Backend<B>, hash: H256) -> RpcResult<Option<BlockId<B>>> where
+	// Asumes there is only one mapped canonical block in the AuxStore, otherwise something is wrong
+	pub fn load_hash<B: BlockT, C>(client: &C, backend: &fc_db::Backend<B>, hash: H256) -> RpcResult<Option<BlockId<B>>> where
 		B: BlockT,
+		C: HeaderBackend<B> + 'static,
 		B: BlockT<Hash=H256> + Send + Sync + 'static,
+		C: Send + Sync + 'static,
 	{
-		let substrate_hash = backend.mapping().block_hash(&hash)
+		let hashes = backend.mapping().block_hashes(&hash)
 			.map_err(|err| internal_err(format!("fetch aux store failed: {:?}", err)))?;
+		let out: Vec<H256> = hashes.into_iter()
+			.filter_map(|h| {
+				if is_canon::<B, C>(client, h) {
+					Some(h)
+				} else {
+					None
+				}
+			}).collect();
 
-		if let Some(substrate_hash) = substrate_hash {
+		if out.len() == 1 {
 			return Ok(Some(
-				BlockId::Hash(substrate_hash)
+				BlockId::Hash(out[0])
 			));
 		}
 		Ok(None)
@@ -168,11 +179,11 @@ pub fn error_on_execution_failure(reason: &ExitReason, data: &[u8]) -> Result<()
 	match reason {
 		ExitReason::Succeed(_) => Ok(()),
 		ExitReason::Error(e) => {
-			if *e == ExitError::OutOfGas {
+			if *e == ExitError::OutOfGas || *e == ExitError::OutOfFund {
 				// `ServerError(0)` will be useful in estimate gas
 				return Err(Error {
 					code: ErrorCode::ServerError(0),
-					message: format!("out of gas"),
+					message: format!("out of gas or fund"),
 					data: None,
 				});
 			}

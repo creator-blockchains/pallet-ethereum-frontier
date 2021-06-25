@@ -19,7 +19,6 @@
 //! Net rpc interface.
 use jsonrpc_core::Result;
 use jsonrpc_derive::rpc;
-use crate::types::PeerCount;
 
 pub use rpc_impl_NetApi::gen_server::NetApi as NetApiServer;
 
@@ -32,7 +31,7 @@ pub trait NetApi {
 
 	/// Returns number of peers connected to node.
 	#[rpc(name = "net_peerCount")]
-	fn peer_count(&self) -> Result<PeerCount>;
+	fn peer_count(&self) -> Result<String>;
 
 	/// Returns true if client is actively listening for network connections.
 	/// Otherwise false.

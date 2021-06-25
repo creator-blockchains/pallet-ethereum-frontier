@@ -31,7 +31,7 @@ use sp_blockchain::{Error as BlockChainError, HeaderMetadata, HeaderBackend};
 use sp_storage::{StorageKey, StorageData};
 use sp_io::hashing::twox_128;
 use sc_client_api::{
-	backend::{StorageProvider, Backend, StateBackend},
+	backend::{StorageProvider, Backend, StateBackend, AuxStore},
 	client::BlockchainEvents
 };
 use sc_rpc::Metadata;
@@ -57,8 +57,6 @@ use jsonrpc_core::{Result as JsonRpcResult, futures::{Future, Sink}};
 use fp_rpc::{EthereumRuntimeRPCApi, TransactionStatus};
 
 use sc_network::{NetworkService, ExHashT};
-
-use crate::{frontier_backend_client, overrides::OverrideHandle};
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct HexEncodedIdProvider {
@@ -89,31 +87,17 @@ pub struct EthPubSubApi<B: BlockT, P, C, BE, H: ExHashT> {
 	client: Arc<C>,
 	network: Arc<NetworkService<B, H>>,
 	subscriptions: SubscriptionManager<HexEncodedIdProvider>,
-	overrides: Arc<OverrideHandle<B>>,
 	_marker: PhantomData<(B, BE)>,
 }
 
-impl<B: BlockT, P, C, BE, H: ExHashT> EthPubSubApi<B, P, C, BE, H> where
-	B: BlockT<Hash=H256> + Send + Sync + 'static,
-	C: ProvideRuntimeApi<B>,
-	C::Api: EthereumRuntimeRPCApi<B>,
-	C: Send + Sync + 'static,
-{
+impl<B: BlockT, P, C, BE, H: ExHashT> EthPubSubApi<B, P, C, BE, H> {
 	pub fn new(
 		_pool: Arc<P>,
 		client: Arc<C>,
 		network: Arc<NetworkService<B, H>>,
 		subscriptions: SubscriptionManager<HexEncodedIdProvider>,
-		overrides: Arc<OverrideHandle<B>>,
 	) -> Self {
-		Self {
-			_pool,
-			client: client.clone(),
-			network,
-			subscriptions,
-			overrides,
-			_marker: PhantomData
-		}
+		Self { _pool, client, network, subscriptions, _marker: PhantomData }
 	}
 }
 
@@ -159,10 +143,14 @@ impl SubscriptionResult {
 	}
 	pub fn logs(
 		&self,
-		block: ethereum::Block,
+		block_input: Option<ethereum::Block>,
 		receipts: Vec<ethereum::Receipt>,
 		params: &FilteredParams
 	) -> Vec<Log> {
+		if block_input.is_none() {
+			return Vec::new();
+		}
+		let block = block_input.unwrap();
 		let block_hash = Some(H256::from_slice(
 			Keccak256::digest(&rlp::encode(
 				&block.header
@@ -193,7 +181,7 @@ impl SubscriptionResult {
 						block_hash: block_hash,
 						block_number: Some(block.header.number),
 						transaction_hash: transaction_hash,
-						transaction_index: Some(U256::from(receipt_index)),
+						transaction_index: Some(U256::from(log_index)),
 						log_index: Some(U256::from(log_index)),
 						transaction_log_index: Some(U256::from(
 							transaction_log_index
@@ -249,7 +237,7 @@ impl<B: BlockT, P, C, BE, H: ExHashT> EthPubSubApiT for EthPubSubApi<B, P, C, BE
 		B: BlockT<Hash=H256> + Send + Sync + 'static,
 		P: TransactionPool<Block=B> + Send + Sync + 'static,
 		C: ProvideRuntimeApi<B> + StorageProvider<B,BE> +
-			BlockchainEvents<B>,
+			BlockchainEvents<B> + AuxStore,
 		C: HeaderBackend<B> + HeaderMetadata<B, Error=BlockChainError> + 'static,
 		C: Send + Sync + 'static,
 		C::Api: EthereumRuntimeRPCApi<B>,
@@ -271,25 +259,21 @@ impl<B: BlockT, P, C, BE, H: ExHashT> EthPubSubApiT for EthPubSubApi<B, P, C, BE
 
 		let client = self.client.clone();
 		let network = self.network.clone();
-		let overrides = self.overrides.clone();
 		match kind {
 			Kind::Logs => {
+				// NOTE: this conflicted when trying to cherry-pick 45aeab7. our resolution at the
+				// time is to ignore the changes in the cherry-pick. revisit as necessary.
 				self.subscriptions.add(subscriber, |sink| {
 					let stream = client.import_notification_stream()
 					.filter_map(move |notification| {
 						if notification.is_new_best {
 							let id = BlockId::Hash(notification.hash);
-
-							let schema = frontier_backend_client::onchain_storage_schema::<B, C, BE>(
-								client.as_ref(), id
-							);
-							let handler = overrides.schemas.get(&schema).unwrap_or(&overrides.fallback);
-
-							let block = handler.current_block(&id);
-							let receipts = handler.current_receipts(&id);
-
+							let receipts = client.runtime_api()
+								.current_receipts(&id);
+							let block = client.runtime_api()
+								.current_block(&id);
 							match (receipts, block) {
-								(Some(receipts), Some(block)) =>
+								(Ok(Some(receipts)), Ok(Some(block))) =>
 									futures::future::ready(Some((block, receipts))),
 								_ => futures::future::ready(None)
 							}
@@ -300,7 +284,7 @@ impl<B: BlockT, P, C, BE, H: ExHashT> EthPubSubApiT for EthPubSubApi<B, P, C, BE
 					.flat_map(move |(block, receipts)| {
 						futures::stream::iter(
 							SubscriptionResult::new()
-								.logs(block, receipts, &filtered_params)
+								.logs(Some(block), receipts, &filtered_params)
 						)
 					})
 					.map(|x| {
@@ -326,14 +310,12 @@ impl<B: BlockT, P, C, BE, H: ExHashT> EthPubSubApiT for EthPubSubApi<B, P, C, BE
 					.filter_map(move |notification| {
 						if notification.is_new_best {
 							let id = BlockId::Hash(notification.hash);
-
-							let schema = frontier_backend_client::onchain_storage_schema::<B, C, BE>(
-								client.as_ref(), id
-							);
-							let handler = overrides.schemas.get(&schema).unwrap_or(&overrides.fallback);
-
-							let block = handler.current_block(&id);
-							futures::future::ready(block)
+							let block = client.runtime_api()
+								.current_block(&id);
+							match block {
+								Ok(Some(block)) => futures::future::ready(Some(block)),
+								_ => futures::future::ready(None)
+							}
 						} else {
 							futures::future::ready(None)
 						}

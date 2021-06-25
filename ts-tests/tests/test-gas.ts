@@ -4,7 +4,7 @@ import Test from "../build/contracts/Test.json"
 import { describeWithFrontier, createAndFinalizeBlock } from "./util";
 import { AbiItem } from "web3-utils";
 
-describeWithFrontier("Frontier RPC (Gas)", (context) => {
+describeWithFrontier("Frontier RPC (Gas)", `simple-specs.json`, (context) => {
 	const GENESIS_ACCOUNT = "0x6be02d1d3665660d22ff9624b7be0551ee1ac91b";
 
 	const TEST_CONTRACT_BYTECODE = Test.bytecode;
@@ -17,7 +17,7 @@ describeWithFrontier("Frontier RPC (Gas)", (context) => {
 				from: GENESIS_ACCOUNT,
 				data: Test.bytecode,
 			})
-		).to.equal(186067);
+		).to.equal(149143);
 	});
 
 	it.skip("block gas limit over 5M", async function () {

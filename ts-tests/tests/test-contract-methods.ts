@@ -4,7 +4,7 @@ import Test from "../build/contracts/Test.json"
 import { createAndFinalizeBlock, customRequest, describeWithFrontier } from "./util";
 import { AbiItem } from "web3-utils";
 
-describeWithFrontier("Frontier RPC (Contract Methods)", (context) => {
+describeWithFrontier("Frontier RPC (Contract Methods)", `simple-specs.json`, (context) => {
 	const GENESIS_ACCOUNT = "0x6be02d1d3665660d22ff9624b7be0551ee1ac91b";
 	const GENESIS_ACCOUNT_PRIVATE_KEY = "0x99B3C12287537E38C90A9219D4CB074A89A16E9CDB20BF85728EBD97C343E342";
 
@@ -44,38 +44,6 @@ describeWithFrontier("Frontier RPC (Contract Methods)", (context) => {
 		});
 
 		expect(await contract.methods.multiply(3).call()).to.equal("21");
-	});
-	it("should get correct environmental block number", async function () {
-		// Solidity `block.number` is expected to return the same height at which the runtime call was made.
-		const contract = new context.web3.eth.Contract(TEST_CONTRACT_ABI, FIRST_CONTRACT_ADDRESS, {
-			from: GENESIS_ACCOUNT,
-			gasPrice: "0x01",
-		});
-		let block = await context.web3.eth.getBlock("latest");
-		expect(await contract.methods.currentBlock().call()).to.eq(block.number.toString());
-		await createAndFinalizeBlock(context.web3);
-		block = await context.web3.eth.getBlock("latest");
-		expect(await contract.methods.currentBlock().call()).to.eq(block.number.toString());
-	});
-
-	it("should get correct environmental block hash", async function () {
-		this.timeout(20000);
-		// Solidity `blockhash` is expected to return the ethereum block hash at a given height.
-		const contract = new context.web3.eth.Contract(TEST_CONTRACT_ABI, FIRST_CONTRACT_ADDRESS, {
-			from: GENESIS_ACCOUNT,
-			gasPrice: "0x01",
-		});
-		let number = (await context.web3.eth.getBlock("latest")).number;
-		let last = number + 256;
-		for(let i = number; i <= last; i++) {
-			let hash = (await context.web3.eth.getBlock("latest")).hash;
-			expect(await contract.methods.blockHash(i).call()).to.eq(hash);
-			await createAndFinalizeBlock(context.web3);
-		}
-		// should not store more than 256 hashes
-		expect(await contract.methods.blockHash(number).call()).to.eq(
-			"0x0000000000000000000000000000000000000000000000000000000000000000"
-		);
 	});
 
 	// Requires error handling

@@ -18,7 +18,7 @@
 //! Test utilities
 
 use super::*;
-use crate::{Module, Config, IntermediateStateRoot};
+use crate::{Pallet, Config, IntermediateStateRoot};
 use ethereum::{TransactionAction, TransactionSignature};
 use frame_support::{
 	impl_outer_origin, parameter_types, ConsensusEngineId
@@ -158,7 +158,6 @@ impl pallet_evm::Config for Test {
 	type ChainId = ChainId;
 	type BlockGasLimit = BlockGasLimit;
 	type OnChargeTransaction = ();
-	type BlockHashMapping = crate::EthereumBlockHashMapping;
 }
 
 impl Config for Test {
@@ -167,10 +166,10 @@ impl Config for Test {
 	type StateRoot = IntermediateStateRoot;
 }
 
-pub type System = frame_system::Module<Test>;
-pub type Balances = pallet_balances::Module<Test>;
-pub type Ethereum = Module<Test>;
-pub type Evm = pallet_evm::Module<Test>;
+pub type System = frame_system::Pallet<Test>;
+pub type Balances = pallet_balances::Pallet<Test>;
+pub type Ethereum = Pallet<Test>;
+pub type Evm = pallet_evm::Pallet<Test>;
 
 pub struct AccountInfo {
 	pub address: H160,
@@ -180,8 +179,8 @@ pub struct AccountInfo {
 
 fn address_build(seed: u8) -> AccountInfo {
 	let private_key = H256::from_slice(&[(seed + 1) as u8; 32]); //H256::from_low_u64_be((i + 1) as u64);
-	let secret_key = libsecp256k1::SecretKey::parse_slice(&private_key[..]).unwrap();
-	let public_key = &libsecp256k1::PublicKey::from_secret_key(&secret_key).serialize()[1..65];
+	let secret_key = secp256k1::SecretKey::parse_slice(&private_key[..]).unwrap();
+	let public_key = &secp256k1::PublicKey::from_secret_key(&secret_key).serialize()[1..65];
 	let address = H160::from(H256::from_slice(
 		&Keccak256::digest(public_key)[..],
 	));
@@ -268,8 +267,8 @@ impl UnsignedTransaction {
 
 	pub fn sign(&self, key: &H256) -> Transaction {
 		let hash = self.signing_hash();
-		let msg = libsecp256k1::Message::parse(hash.as_fixed_bytes());
-		let s = libsecp256k1::sign(&msg, &libsecp256k1::SecretKey::parse_slice(&key[..]).unwrap());
+		let msg = secp256k1::Message::parse(hash.as_fixed_bytes());
+		let s = secp256k1::sign(&msg, &secp256k1::SecretKey::parse_slice(&key[..]).unwrap());
 		let sig = s.0.serialize();
 
 		let sig = TransactionSignature::new(

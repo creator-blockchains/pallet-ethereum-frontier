@@ -27,7 +27,7 @@ use sc_client_api::BlockOf;
 use sp_blockchain::HeaderBackend;
 use fp_rpc::EthereumRuntimeRPCApi;
 use futures_timer::Delay;
-use log::debug;
+use log::warn;
 
 const LIMIT: usize = 8;
 
@@ -114,7 +114,7 @@ impl<Block: BlockT, C, B> Stream for MappingSyncWorker<Block, C, B> where
 				},
 				Err(e) => {
 					self.have_next = false;
-					debug!(target: "mapping-sync", "Syncing failed with error {:?}, retrying.", e);
+					warn!(target: "mapping-sync", "Syncing failed with error {:?}, retrying.", e);
 					Poll::Ready(Some(()))
 				},
 			}

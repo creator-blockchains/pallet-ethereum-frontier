@@ -5,6 +5,7 @@ import { spawn, ChildProcess } from "child_process";
 export const PORT = 19931;
 export const RPC_PORT = 19932;
 export const WS_PORT = 19933;
+export const SPECS_PATH = `./frontier-test-specs`;
 
 export const DISPLAY_LOG = process.env.FRONTIER_LOG || false;
 export const FRONTIER_LOG = process.env.FRONTIER_LOG || "info";
@@ -44,7 +45,8 @@ export async function createAndFinalizeBlock(web3: Web3) {
 	}
 }
 
-export async function startFrontierNode(provider?: string): Promise<{ web3: Web3; binary: ChildProcess }> {
+export async function startFrontierNode(specFilename: string, provider?: string): Promise<{ web3: Web3; binary: ChildProcess }> {
+
 	var web3;
 	if (!provider || provider == 'http') {
 		web3 = new Web3(`http://localhost:${RPC_PORT}`);
@@ -52,7 +54,7 @@ export async function startFrontierNode(provider?: string): Promise<{ web3: Web3
 
 	const cmd = BINARY_PATH;
 	const args = [
-		`--chain=dev`,
+		`--chain=${SPECS_PATH}/${specFilename}`,
 		`--validator`, // Required by manual sealing to author the blocks
 		`--execution=Native`, // Faster execution using native
 		`--no-telemetry`,
@@ -120,14 +122,14 @@ export async function startFrontierNode(provider?: string): Promise<{ web3: Web3
 	return { web3, binary };
 }
 
-export function describeWithFrontier(title: string, cb: (context: { web3: Web3 }) => void, provider?: string) {
+export function describeWithFrontier(title: string, specFilename: string, cb: (context: { web3: Web3 }) => void, provider?: string) {
 	describe(title, () => {
 		let context: { web3: Web3 } = { web3: null };
 		let binary: ChildProcess;
 		// Making sure the Frontier node has started
 		before("Starting Frontier Test Node", async function () {
 			this.timeout(SPAWNING_TIME);
-			const init = await startFrontierNode(provider);
+			const init = await startFrontierNode(specFilename, provider);
 			context.web3 = init.web3;
 			binary = init.binary;
 		});

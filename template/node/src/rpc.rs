@@ -14,13 +14,14 @@ use sc_client_api::{
 	backend::{StorageProvider, Backend, StateBackend, AuxStore},
 	client::BlockchainEvents
 };
+use sc_transaction_graph::{ChainApi, Pool};
 use sc_rpc::SubscriptionTaskExecutor;
 use sp_runtime::traits::BlakeTwo256;
 use sp_block_builder::BlockBuilder;
 use sc_network::NetworkService;
 use jsonrpc_pubsub::manager::SubscriptionManager;
 use pallet_ethereum::EthereumStorageSchema;
-use fc_rpc::{StorageOverride, SchemaV1Override, OverrideHandle, RuntimeApiStorageOverride};
+use fc_rpc::{StorageOverride, SchemaV1Override};
 
 /// Light client extra dependencies.
 pub struct LightDeps<C, F, P> {
@@ -35,11 +36,13 @@ pub struct LightDeps<C, F, P> {
 }
 
 /// Full client dependencies.
-pub struct FullDeps<C, P> {
+pub struct FullDeps<C, P, A: ChainApi> {
 	/// The client instance to use.
 	pub client: Arc<C>,
 	/// Transaction pool instance.
 	pub pool: Arc<P>,
+	/// Graph pool instance.
+	pub graph: Arc<Pool<A>>,
 	/// Whether to deny unsafe calls
 	pub deny_unsafe: DenyUnsafe,
 	/// The Node authority flag
@@ -54,15 +57,13 @@ pub struct FullDeps<C, P> {
 	pub filter_pool: Option<FilterPool>,
 	/// Backend.
 	pub backend: Arc<fc_db::Backend<Block>>,
-	/// Maximum number of logs in a query.
-	pub max_past_logs: u32,
 	/// Manual seal command sink
 	pub command_sink: Option<futures::channel::mpsc::Sender<sc_consensus_manual_seal::rpc::EngineCommand<Hash>>>,
 }
 
 /// Instantiate all Full RPC extensions.
-pub fn create_full<C, P, BE>(
-	deps: FullDeps<C, P>,
+pub fn create_full<C, P, BE, A>(
+	deps: FullDeps<C, P, A>,
 	subscription_task_executor: SubscriptionTaskExecutor
 ) -> jsonrpc_core::IoHandler<sc_rpc::Metadata> where
 	BE: Backend<Block> + 'static,
@@ -76,6 +77,7 @@ pub fn create_full<C, P, BE>(
 	C::Api: pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi<Block, Balance>,
 	C::Api: fp_rpc::EthereumRuntimeRPCApi<Block>,
 	P: TransactionPool<Block=Block> + 'static,
+	A: ChainApi<Block = Block> + 'static,
 {
 	use substrate_frame_rpc_system::{FullSystem, SystemApi};
 	use pallet_transaction_payment_rpc::{TransactionPayment, TransactionPaymentApi};
@@ -89,6 +91,7 @@ pub fn create_full<C, P, BE>(
 	let FullDeps {
 		client,
 		pool,
+		graph,
 		deny_unsafe,
 		is_authority,
 		network,
@@ -96,7 +99,6 @@ pub fn create_full<C, P, BE>(
 		filter_pool,
 		command_sink,
 		backend,
-		max_past_logs,
 		enable_dev_signer,
 	} = deps;
 
@@ -111,29 +113,23 @@ pub fn create_full<C, P, BE>(
 	if enable_dev_signer {
 		signers.push(Box::new(EthDevSigner::new()) as Box<dyn EthSigner>);
 	}
-	let mut overrides_map = BTreeMap::new();
-	overrides_map.insert(
+	let mut overrides = BTreeMap::new();
+	overrides.insert(
 		EthereumStorageSchema::V1,
 		Box::new(SchemaV1Override::new(client.clone())) as Box<dyn StorageOverride<_> + Send + Sync>
 	);
-
-	let overrides = Arc::new(OverrideHandle {
-		schemas: overrides_map,
-		fallback: Box::new(RuntimeApiStorageOverride::new(client.clone())),
-	});
-
 	io.extend_with(
 		EthApiServer::to_delegate(EthApi::new(
 			client.clone(),
 			pool.clone(),
+			graph,
 			frontier_template_runtime::TransactionConverter,
 			network.clone(),
 			pending_transactions.clone(),
 			signers,
-			overrides.clone(),
+			overrides,
 			backend,
 			is_authority,
-			max_past_logs,
 		))
 	);
 
@@ -143,8 +139,6 @@ pub fn create_full<C, P, BE>(
 				client.clone(),
 				filter_pool.clone(),
 				500 as usize, // max stored filters
-				overrides.clone(),
-				max_past_logs,
 			))
 		);
 	}
@@ -153,8 +147,6 @@ pub fn create_full<C, P, BE>(
 		NetApiServer::to_delegate(NetApi::new(
 			client.clone(),
 			network.clone(),
-			// Whether to format the `peer_count` response as Hex (default) or not.
-			true,
 		))
 	);
 
@@ -173,7 +165,6 @@ pub fn create_full<C, P, BE>(
 				HexEncodedIdProvider::default(),
 				Arc::new(subscription_task_executor)
 			),
-			overrides
 		))
 	);
 

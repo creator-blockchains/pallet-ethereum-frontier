@@ -159,13 +159,13 @@ impl<Block: BlockT> MappingDb<Block> {
 		}
 	}
 
-	pub fn block_hash(
+	pub fn block_hashes(
 		&self,
 		ethereum_block_hash: &H256,
-	) -> Result<Option<Block::Hash>, String> {
+	) -> Result<Vec<Block::Hash>, String> {
 		match self.db.get(crate::columns::BLOCK_MAPPING, &ethereum_block_hash.encode()) {
-			Some(raw) => Ok(Some(Block::Hash::decode(&mut &raw[..]).map_err(|e| format!("{:?}", e))?)),
-			None => Ok(None),
+			Some(raw) => Ok(Vec::<Block::Hash>::decode(&mut &raw[..]).map_err(|e| format!("{:?}", e))?),
+			None => Ok(Vec::new()),
 		}
 	}
 
@@ -179,25 +179,6 @@ impl<Block: BlockT> MappingDb<Block> {
 		}
 	}
 
-	pub fn write_none(
-		&self,
-		block_hash: Block::Hash
-	) -> Result<(), String> {
-		let _lock = self.write_lock.lock();
-
-		let mut transaction = sp_database::Transaction::new();
-
-		transaction.set(
-			crate::columns::SYNCED_MAPPING,
-			&block_hash.encode(),
-			&true.encode(),
-		);
-
-		self.db.commit(transaction).map_err(|e| format!("{:?}", e))?;
-
-		Ok(())
-	}
-
 	pub fn write_hashes(
 		&self,
 		commitment: MappingCommitment<Block>,
@@ -206,10 +187,12 @@ impl<Block: BlockT> MappingDb<Block> {
 
 		let mut transaction = sp_database::Transaction::new();
 
+		let mut block_hashes = self.block_hashes(&commitment.ethereum_block_hash)?;
+		block_hashes.push(commitment.block_hash);
 		transaction.set(
 			crate::columns::BLOCK_MAPPING,
 			&commitment.ethereum_block_hash.encode(),
-			&commitment.block_hash.encode()
+			&block_hashes.encode()
 		);
 
 		for (i, ethereum_transaction_hash) in commitment.ethereum_transaction_hashes.into_iter().enumerate() {

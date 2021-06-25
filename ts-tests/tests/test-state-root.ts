@@ -3,7 +3,8 @@ import { step } from "mocha-steps";
 
 import { createAndFinalizeBlock, describeWithFrontier } from "./util";
 
-describeWithFrontier("Frontier RPC (State root hash)", (context) => {
+describeWithFrontier("Frontier RPC (State root hash)", `simple-specs.json`, (context) => {
+
 	let block;
 	step("should calculate a valid intermediate state root hash", async function () {
 		await createAndFinalizeBlock(context.web3);
